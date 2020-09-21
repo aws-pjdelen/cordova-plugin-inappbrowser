@@ -51,6 +51,9 @@
 
 @interface CDVWKInAppBrowserViewController : UIViewController <CDVScreenOrientationDelegate,WKNavigationDelegate,WKUIDelegate,WKScriptMessageHandler,UIAdaptivePresentationControllerDelegate>{
     @private
+    NSString* _userAgent;
+    NSString* _prevUserAgent;
+    NSInteger _userAgentLockToken;
     CDVInAppBrowserOptions *_browserOptions;
     NSDictionary *_settings;
 }
@@ -68,9 +71,11 @@
 @property (nonatomic, weak) id <CDVScreenOrientationDelegate> orientationDelegate;
 @property (nonatomic, weak) CDVWKInAppBrowser* navigationDelegate;
 @property (nonatomic) NSURL* currentURL;
+@property (nonatomic) NSInteger* statusCode;
 
 - (void)close;
 - (void)navigateTo:(NSURL*)url;
+- (void)navigateToNew:(NSURL*)url headers:(NSString*)headers;
 - (void)showLocationBar:(BOOL)show;
 - (void)showToolBar:(BOOL)show : (NSString *) toolbarPosition;
 - (void)setCloseButtonTitle:(NSString*)title : (NSString*) colorString : (int) buttonIndex;

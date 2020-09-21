@@ -66,6 +66,8 @@ import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
 import android.widget.TextView;
 
+import androidx.annotation.RequiresApi;
+
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.Config;
 import org.apache.cordova.CordovaArgs;
@@ -78,6 +80,7 @@ import org.apache.cordova.PluginResult;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -86,6 +89,12 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.HashMap;
 import java.util.StringTokenizer;
+
+import okhttp3.Call;
+import okhttp3.Headers;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 
 @SuppressLint("SetJavaScriptEnabled")
 public class InAppBrowser extends CordovaPlugin {
@@ -153,6 +162,10 @@ public class InAppBrowser extends CordovaPlugin {
     private boolean fullscreen = true;
     private String[] allowedSchemes;
     private InAppBrowserClient currentClient;
+    
+    private HashMap <String, String> extraHeaders; //for additional custom request headers
+
+    private int statusCode;
 
     /**
      * Executes the request and returns PluginResult.
@@ -172,6 +185,8 @@ public class InAppBrowser extends CordovaPlugin {
             }
             final String target = t;
             final HashMap<String, String> features = parseFeature(args.optString(2));
+
+            extraHeaders = parseHeaders(args.optString(3));  //parse custom headers
 
             LOG.d(LOG_TAG, "target = " + target);
 
@@ -440,13 +455,49 @@ public class InAppBrowser extends CordovaPlugin {
             HashMap<String, String> map = new HashMap<String, String>();
             StringTokenizer features = new StringTokenizer(optString, ",");
             StringTokenizer option;
+           
             while(features.hasMoreElements()) {
                 option = new StringTokenizer(features.nextToken(), "=");
                 if (option.hasMoreElements()) {
                     String key = option.nextToken();
-                    String value = option.nextToken();
-                    if (!customizableOptions.contains(key)) {
-                        value = value.equals("yes") || value.equals("no") ? value : "yes";
+                    String value = "";
+                    if (option.hasMoreElements()){ 
+                        value = option.nextToken();
+                        if (!customizableOptions.contains(key)){
+                            value = value.equals("yes") || value.equals("no") ? value : "yes";
+                        }
+                    }
+                    
+                    map.put(key, value);
+                }
+            }
+            return map;
+        }
+    }
+
+    /**
+     * Put the list of headers into a map
+     * 
+     * @param headerString
+     * @return
+     */
+    private HashMap<String, String> parseHeaders(String headerString) {
+        if (headerString.equals(NULL)) {
+            return null;
+        } else {
+            HashMap<String, String> map = new HashMap<String, String>();
+            StringTokenizer features = new StringTokenizer(headerString, "&");
+            StringTokenizer option;
+             //for custom headers, it should in the following format:
+            // 'header=value,header=value,header=value,...' 
+            //similar to in-app-browser options
+            while(features.hasMoreElements()) {
+                option = new StringTokenizer(features.nextToken(), "=");
+                if (option.hasMoreElements()) {
+                    String key = option.nextToken();
+                    String value = "";
+                    if (option.hasMoreElements()){
+                        value = option.nextToken();
                     }
                     map.put(key, value);
                 }
@@ -607,9 +658,9 @@ public class InAppBrowser extends CordovaPlugin {
         imm.hideSoftInputFromWindow(edittext.getWindowToken(), 0);
 
         if (!url.startsWith("http") && !url.startsWith("file:")) {
-            this.inAppWebView.loadUrl("http://" + url);
+            this.inAppWebView.loadUrl("http://" + url, extraHeaders);
         } else {
-            this.inAppWebView.loadUrl(url);
+            this.inAppWebView.loadUrl(url, extraHeaders);
         }
         this.inAppWebView.requestFocus();
     }
@@ -802,7 +853,7 @@ public class InAppBrowser extends CordovaPlugin {
                 dialog.getWindow().getAttributes().windowAnimations = android.R.style.Animation_Dialog;
                 dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
                 if (fullscreen) {
-                    dialog.getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
+                    dialog.getWindow().setFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN, WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN);
                 }
                 dialog.setCancelable(true);
                 dialog.setInAppBroswer(getInAppBrowser());
@@ -1042,7 +1093,7 @@ public class InAppBrowser extends CordovaPlugin {
                     CookieManager.getInstance().setAcceptThirdPartyCookies(inAppWebView,true);
                 }
 
-                inAppWebView.loadUrl(url);
+                inAppWebView.loadUrl(url, extraHeaders);
                 inAppWebView.setId(Integer.valueOf(6));
                 inAppWebView.getSettings().setLoadWithOverviewMode(true);
                 inAppWebView.getSettings().setUseWideViewPort(useWideViewPort);
@@ -1060,7 +1111,7 @@ public class InAppBrowser extends CordovaPlugin {
                 // Don't add the toolbar if its been disabled
                 if (getShowLocationBar()) {
                     // Add our toolbar to our main view/layout
-                    main.addView(toolbar);
+                    // main.addView(toolbar);
                 }
 
                 // Add our webview to our main view/layout
@@ -1070,7 +1121,7 @@ public class InAppBrowser extends CordovaPlugin {
 
                 // Don't add the footer unless it's been enabled
                 if (showFooter) {
-                    webViewLayout.addView(footer);
+                    // webViewLayout.addView(footer);
                 }
 
                 WindowManager.LayoutParams lp = new WindowManager.LayoutParams();
@@ -1444,6 +1495,10 @@ public class InAppBrowser extends CordovaPlugin {
                 JSONObject obj = new JSONObject();
                 obj.put("type", LOAD_STOP_EVENT);
                 obj.put("url", url);
+                obj.put("status_code", statusCode);
+
+                // LOG.d(LOG_TAG, obj.toString());
+                // System.out.println("[loadstop stausCode]" + obj.toString());
 
                 sendUpdate(obj, true);
             } catch (JSONException ex) {
@@ -1451,8 +1506,17 @@ public class InAppBrowser extends CordovaPlugin {
             }
         }
 
+        @Override
+        @TargetApi(Build.VERSION_CODES.M)
+        public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse errorResponse) {
+            super.onReceivedHttpError(view, request, errorResponse);
+            statusCode = errorResponse.getStatusCode();
+            // System.out.println("[loadstop onReceivedHttpError]" + String.valueOf(statusCode) + " | " + errorResponse.toString() );
+        }
+
         public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
             super.onReceivedError(view, errorCode, description, failingUrl);
+            // System.out.println("[loadstop onReceivedError] errorCode" + String.valueOf(errorCode) );
 
             try {
                 JSONObject obj = new JSONObject();

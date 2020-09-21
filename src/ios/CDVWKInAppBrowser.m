@@ -24,6 +24,7 @@
 #endif
 
 #import <Cordova/CDVPluginResult.h>
+#import <Cordova/CDVUserAgentUtil.h>
 
 #define    kInAppBrowserTargetSelf @"_self"
 #define    kInAppBrowserTargetSystem @"_system"
@@ -34,8 +35,9 @@
 
 #define    IAB_BRIDGE_NAME @"cordova_iab"
 
-#define    TOOLBAR_HEIGHT 44.0
-#define    LOCATIONBAR_HEIGHT 21.0
+#define    TOOLBAR_HEIGHT 0.0
+#define    STATUSBAR_HEIGHT 0.0
+#define    LOCATIONBAR_HEIGHT 0.0
 #define    FOOTER_HEIGHT ((TOOLBAR_HEIGHT) + (LOCATIONBAR_HEIGHT))
 
 #pragma mark CDVWKInAppBrowser
@@ -55,11 +57,40 @@ static CDVWKInAppBrowser* instance = nil;
 
 - (void)pluginInitialize
 {
+  [[UIDevice currentDevice] beginGeneratingDeviceOrientationNotifications];
+    [[NSNotificationCenter defaultCenter]
+     addObserver:self selector:@selector(orientationChanged:)
+     name:UIDeviceOrientationDidChangeNotification
+     object:[UIDevice currentDevice]];
+
     instance = self;
     _previousStatusBarStyle = -1;
     _callbackIdPattern = nil;
     _beforeload = @"";
     _waitForBeforeload = NO;
+}
+
+- (void) orientationChanged:(NSNotification *)note
+{
+    UIDevice * device = note.object;
+    switch(device.orientation)
+    {
+        case UIDeviceOrientationLandscapeLeft:
+        case UIDeviceOrientationLandscapeRight:
+        case UIDeviceOrientationPortraitUpsideDown:{
+            
+            /* start special animation */
+            NSNumber *value = [NSNumber numberWithInt:UIInterfaceOrientationPortrait];
+            [[UIDevice currentDevice] setValue:value forKey:@"orientation"];
+            [UINavigationController attemptRotationToDeviceOrientation];
+            [[UIDevice currentDevice] endGeneratingDeviceOrientationNotifications];
+            };
+            break;
+            
+            
+        default:
+            break;
+    };
 }
 
 - (void)onReset
@@ -73,6 +104,8 @@ static CDVWKInAppBrowser* instance = nil;
         NSLog(@"IAB.close() called but it was already closed.");
         return;
     }
+    NSNumber *value = [NSNumber numberWithInt:UIInterfaceOrientationPortrait];
+    [[UIDevice currentDevice] setValue:value forKey:@"orientation"];
     
     // Things are cleaned up in browserExit.
     [self.inAppBrowserViewController close];
@@ -94,6 +127,7 @@ static CDVWKInAppBrowser* instance = nil;
     NSString* url = [command argumentAtIndex:0];
     NSString* target = [command argumentAtIndex:1 withDefault:kInAppBrowserTargetSelf];
     NSString* options = [command argumentAtIndex:2 withDefault:@"" andClass:[NSString class]];
+    NSString* headers = [command argumentAtIndex:3 withDefault:@"" andClass:[NSString class]];
     
     self.callbackId = command.callbackId;
     
@@ -110,7 +144,8 @@ static CDVWKInAppBrowser* instance = nil;
         } else if ([target isEqualToString:kInAppBrowserTargetSystem]) {
             [self openInSystem:absoluteUrl];
         } else { // _blank or anything else
-            [self openInInAppBrowser:absoluteUrl withOptions:options];
+            // [self openInInAppBrowser:absoluteUrl withOptions:options];
+            [self openInInAppBrowser:absoluteUrl withOptions:options withHeaders:headers];
         }
         
         pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK];
@@ -122,7 +157,7 @@ static CDVWKInAppBrowser* instance = nil;
     [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
 }
 
-- (void)openInInAppBrowser:(NSURL*)url withOptions:(NSString*)options
+- (void)openInInAppBrowser:(NSURL*)url withOptions:(NSString*)options withHeaders:(NSString*)headers
 {
     CDVInAppBrowserOptions* browserOptions = [CDVInAppBrowserOptions parseOptions:options];
     
@@ -214,13 +249,13 @@ static CDVWKInAppBrowser* instance = nil;
     }
     // Set Presentation Style
     UIModalPresentationStyle presentationStyle = UIModalPresentationFullScreen; // default
-    if (browserOptions.presentationstyle != nil) {
-        if ([[browserOptions.presentationstyle lowercaseString] isEqualToString:@"pagesheet"]) {
-            presentationStyle = UIModalPresentationPageSheet;
-        } else if ([[browserOptions.presentationstyle lowercaseString] isEqualToString:@"formsheet"]) {
-            presentationStyle = UIModalPresentationFormSheet;
-        }
-    }
+    // if (browserOptions.presentationstyle != nil) {
+    //     if ([[browserOptions.presentationstyle lowercaseString] isEqualToString:@"pagesheet"]) {
+    //         presentationStyle = UIModalPresentationPageSheet;
+    //     } else if ([[browserOptions.presentationstyle lowercaseString] isEqualToString:@"formsheet"]) {
+    //         presentationStyle = UIModalPresentationFormSheet;
+    //     }
+    // }
     self.inAppBrowserViewController.modalPresentationStyle = presentationStyle;
     
     // Set Transition Style
@@ -254,8 +289,15 @@ static CDVWKInAppBrowser* instance = nil;
         _beforeload = @"yes";
     }
     _waitForBeforeload = ![_beforeload isEqualToString:@""];
-    
-    [self.inAppBrowserViewController navigateTo:url];
+
+    //navigate with headers or not
+    if ([headers isEqualToString:@""]) {
+        [self.inAppBrowserViewController navigateTo:url];
+    }
+    else {
+        [self.inAppBrowserViewController navigateToNew:url headers:headers];
+    } 
+    //
     if (!browserOptions.hidden) {
         [self show:nil withNoAnimate:browserOptions.hidden];
     }
@@ -350,9 +392,20 @@ static CDVWKInAppBrowser* instance = nil;
 - (void)openInCordovaWebView:(NSURL*)url withOptions:(NSString*)options
 {
     NSURLRequest* request = [NSURLRequest requestWithURL:url];
+    
+#ifdef __CORDOVA_4_0_0
+
     // the webview engine itself will filter for this according to <allow-navigation> policy
     // in config.xml for cordova-ios-4.0
     [self.webViewEngine loadRequest:request];
+#else
+    if ([self.commandDelegate URLIsWhitelisted:url]) {
+        [self.webView loadRequest:request];
+    } else { // this assumes the InAppBrowser can be excepted from the white-list
+        // [self openInInAppBrowser:url withOptions:options];
+        [self openInInAppBrowser:url withOptions:options withHeaders:@""];
+    }
+#endif
 }
 
 - (void)openInSystem:(NSURL*)url
@@ -495,6 +548,12 @@ static CDVWKInAppBrowser* instance = nil;
  * to the InAppBrowser plugin. Care has been taken that other callbacks cannot be triggered, and that no
  * other code execution is possible.
  */
+ - (void)webView:(WKWebView *)theWebView decidePolicyForNavigationResponse:(WKNavigationResponse *)navigationResponse decisionHandler:(void (^)(WKNavigationResponsePolicy))decisionHandler {
+     NSHTTPURLResponse *response = (NSHTTPURLResponse *)navigationResponse.response;
+     self.inAppBrowserViewController.statusCode = [response statusCode];
+     decisionHandler(WKNavigationResponsePolicyAllow);
+ }
+
 - (void)webView:(WKWebView *)theWebView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
     
     NSURL* url = navigationAction.request.URL;
@@ -618,6 +677,7 @@ static CDVWKInAppBrowser* instance = nil;
 {
     if (self.callbackId != nil) {
         NSString* url = [theWebView.URL absoluteString];
+        NSNumber* statusCode = [NSNumber numberWithInt:(int)self.inAppBrowserViewController.statusCode];
         if(url == nil){
             if(self.inAppBrowserViewController.currentURL != nil){
                 url = [self.inAppBrowserViewController.currentURL absoluteString];
@@ -626,7 +686,7 @@ static CDVWKInAppBrowser* instance = nil;
             }
         }
         CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
-                                                      messageAsDictionary:@{@"type":@"loadstop", @"url":url}];
+                                                      messageAsDictionary:@{@"type":@"loadstop", @"url":url, @"status_code":statusCode}];
         [pluginResult setKeepCallback:[NSNumber numberWithBool:YES]];
         
         [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
@@ -1085,6 +1145,41 @@ BOOL isExiting = FALSE;
     });
 }
 
+- (void)navigateToNew:(NSURL*)url headers:(NSString*)headers
+{
+    //NSURLRequest* request = [NSURLRequest requestWithURL:url];
+
+    NSMutableURLRequest* request = [[NSMutableURLRequest alloc] initWithURL:url];
+    //for custom headers, it should in the following format:
+    // 'header=value,header=value,header=value,...' 
+    //similar to in-app-browser options
+    //[request setValue:@"1" forHTTPHeaderField:@"horror"];
+    NSArray* pairs = [headers componentsSeparatedByString:@"&"];
+
+    for (NSString* pair in pairs) {
+        NSArray* keyvalue = [pair componentsSeparatedByString:@"="];
+
+        if ([keyvalue count] == 2) {
+            NSString* key = [[keyvalue objectAtIndex:0] lowercaseString];
+            NSString* value = [keyvalue objectAtIndex:1];
+            [request setValue:value forHTTPHeaderField:key];
+        }
+        
+    }
+
+    NSLog(@"Inappbrowser headers %@", [request allHTTPHeaderFields]);
+
+    if (_userAgentLockToken != 0) {
+        [self.webView loadRequest:request];
+    } else {
+        [CDVUserAgentUtil acquireLock:^(NSInteger lockToken) {
+            _userAgentLockToken = lockToken;
+            [CDVUserAgentUtil setUserAgent:_userAgent lockToken:lockToken];
+            [self.webView loadRequest:request];
+        }];
+    }
+}
+
 - (void)navigateTo:(NSURL*)url
 {
     if ([url.scheme isEqualToString:@"file"]) {
@@ -1171,6 +1266,11 @@ BOOL isExiting = FALSE;
     return [self.navigationDelegate didStartProvisionalNavigation:theWebView];
 }
 
+- (void)webView:(WKWebView *)theWebView decidePolicyForNavigationResponse:(WKNavigationResponse *)navigationResponse decisionHandler:(void (^)(WKNavigationResponsePolicy))decisionHandler {
+    
+    [self.navigationDelegate webView:theWebView decidePolicyForNavigationResponse:navigationResponse decisionHandler:decisionHandler];
+}
+
 - (void)webView:(WKWebView *)theWebView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler
 {
     NSURL *url = navigationAction.request.URL;
@@ -1235,19 +1335,19 @@ BOOL isExiting = FALSE;
 
 - (BOOL)shouldAutorotate
 {
-    if ((self.orientationDelegate != nil) && [self.orientationDelegate respondsToSelector:@selector(shouldAutorotate)]) {
-        return [self.orientationDelegate shouldAutorotate];
-    }
-    return YES;
+    // if ((self.orientationDelegate != nil) && [self.orientationDelegate respondsToSelector:@selector(shouldAutorotate)]) {
+    //     return [self.orientationDelegate shouldAutorotate];
+    // }
+    return 0;
 }
 
 - (UIInterfaceOrientationMask)supportedInterfaceOrientations
 {
-    if ((self.orientationDelegate != nil) && [self.orientationDelegate respondsToSelector:@selector(supportedInterfaceOrientations)]) {
-        return [self.orientationDelegate supportedInterfaceOrientations];
-    }
+    // if ((self.orientationDelegate != nil) && [self.orientationDelegate respondsToSelector:@selector(supportedInterfaceOrientations)]) {
+    //     return [self.orientationDelegate supportedInterfaceOrientations];
+    // }
     
-    return 1 << UIInterfaceOrientationPortrait;
+    return NO;
 }
 
 - (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator
