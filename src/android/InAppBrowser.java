@@ -185,7 +185,7 @@ public class InAppBrowser extends CordovaPlugin {
             }
             final String target = t;
             final HashMap<String, String> features = parseFeature(args.optString(2));
-            this.status_code = 0;
+            this.statusCode = 0;
 
             extraHeaders = parseHeaders(args.optString(3));  //parse custom headers
 
